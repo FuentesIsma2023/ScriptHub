@@ -234,7 +234,11 @@ function Show-RunForm {
             [System.Windows.Forms.MessageBoxButtons]::YesNo,
             [System.Windows.Forms.MessageBoxIcon]::Warning)
         if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) { return }
-        [void](Invoke-ScriptHubScript -ScriptText $txtPrev.Text -CmdName $CmdName -PSVersion $PSVersion)
+        try {
+            [void](Invoke-ScriptHubScript -ScriptText $txtPrev.Text -CmdName $CmdName -PSVersion $PSVersion)
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "Execution error", "OK", "Error")
+        }
     }.GetNewClosure())
 
     $btnCopyR.Add_Click({
@@ -681,14 +685,18 @@ function Show-MainForm {
             $lblDName.Text  = "$($cmd.Name)  [$($cmd.Team) > $($cmd.Category) > $($cmd.SubCategory)]  [PS $($cmd.PSVersion)]"
             $lblDTags.Text  = "Tags: $($cmd.Tags)"
             $lblDNotes.Text = "$($cmd.Notes)"
-            $moduleText = if (@($deps.Modules).Count -gt 0) { @($deps.Modules) -join ', ' } else { 'None detected' }
+            $moduleText = if (@($deps.ModuleStatus).Count -gt 0) {
+                @($deps.ModuleStatus | ForEach-Object {
+                    if ($_.Installed) { "$($_.Name) $($_.Version)" } else { "$($_.Name) (missing)" }
+                }) -join ', '
+            } else { 'None detected' }
             $psText = if ($deps.RequiresPowerShell7) { 'PowerShell 7 required' } else { "PowerShell $($deps.PowerShellVersion)" }
             $lblDeps.Text = "Dependencies: $moduleText`nRuntime: $psText"
             $txtScript.Text = $cmd.Script
             $btnRun.Enabled = $true
             $btnSavePS1.Enabled = $true
             $btnCopy.Enabled = $true
-            $btnInstallDeps.Enabled = @($deps.Modules).Count -gt 0
+            $btnInstallDeps.Enabled = @($deps.MissingModules).Count -gt 0
             $btnInstallPS7.Enabled = $deps.RequiresPowerShell7
         }
     }
@@ -788,6 +796,12 @@ function Show-MainForm {
         try {
             $cmd = Get-ScriptHubCommandById -Id $id
             $deps = Get-ScriptHubDependencies -Command $cmd
+            $confirm = [System.Windows.Forms.MessageBox]::Show(
+                "Install missing modules for '$($cmd.Name)'?`n`n$(@($deps.MissingModules) -join "`n")",
+                "Confirm dependency installation",
+                [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                [System.Windows.Forms.MessageBoxIcon]::Warning)
+            if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) { return }
             [void](Install-ScriptHubDependencies -Dependencies $deps -CommandName $cmd.Name)
             $statusBar.Text = " Dependency installer opened for: $($cmd.Name)"
         } catch {

@@ -5,18 +5,18 @@ cd /d "%~dp0"
 set "SCRIPT=%~dp0ScriptHub.UI.ps1"
 
 if not exist "%SCRIPT%" (
-    echo No se encontro ScriptHub.UI.ps1 en:
+    echo ScriptHub.UI.ps1 was not found in:
     echo %~dp0
     pause
     exit /b 1
 )
 
-rem WinForms usa Windows PowerShell 5.1 para mayor compatibilidad.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%"
+rem Windows PowerShell 5.1 provides the best compatibility for this WinForms UI.
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File "%SCRIPT%"
 
 if errorlevel 1 (
     echo.
-    echo ScriptHub termino con un error.
+    echo ScriptHub ended with an error.
     pause
 )
 

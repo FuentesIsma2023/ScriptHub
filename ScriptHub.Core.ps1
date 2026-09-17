@@ -4,12 +4,12 @@
 # Author: Ismael Najera
 #
 # The catalog is code-based: scripts live in ScriptHub.Catalog.ps1.
-# Nothing is written to %APPDATA%; the tool is read-only at runtime.
+# The tool keeps its catalog in memory and writes only temporary run/install files.
 # ============================================================================
 
 # === GLOBAL CONFIG ===
 $global:ScriptHubConfig = [ordered]@{
-    Version         = '3.0'
+    Version         = '4.0'
     Author          = 'Ismael Najera'
     # Intake and feedback endpoints published on the ScriptHub site.
     # Replace the URLs below with the real Forms / List links.
@@ -52,6 +52,7 @@ function Get-ScriptHubDependencies {
     param([psobject]$Command)
 
     $scriptText = [string]$Command.Script
+    $requiresPowerShell7 = ([string]$Command.PSVersion -match '(?i)^\s*7(?:\s*\(recommended\))?\s*$')
     $modules = [System.Collections.Generic.List[string]]::new()
     $addModule = {
         param([string]$Name)
@@ -77,11 +78,49 @@ function Get-ScriptHubDependencies {
         & $addModule 'Az'
     }
 
+    $moduleStatus = foreach ($module in $modules) {
+        $installed = Test-ScriptHubModuleInstalled -ModuleName $module -RequiresPowerShell7 $requiresPowerShell7
+        [PSCustomObject]@{
+            Name      = $module
+            Installed = $installed.Installed
+            Version   = $installed.Version
+        }
+    }
+
     [PSCustomObject]@{
         PowerShellVersion = $Command.PSVersion
-        RequiresPowerShell7 = ([string]$Command.PSVersion -match '(?i)^\s*7(?:\s*\(recommended\))?\s*$')
+        RequiresPowerShell7 = $requiresPowerShell7
+        DependencyHost = if ($requiresPowerShell7) { 'PowerShell 7' } else { 'Windows PowerShell 5.1' }
         Modules = @($modules)
-        PowerShell7Url = 'https://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows'
+        ModuleStatus = @($moduleStatus)
+        MissingModules = @($moduleStatus | Where-Object { -not $_.Installed } | ForEach-Object Name)
+        PowerShell7Url = $global:ScriptHubConfig.PowerShell7Url
+    }
+}
+
+function Test-ScriptHubModuleInstalled {
+    param(
+        [string]$ModuleName,
+        [bool]$RequiresPowerShell7
+    )
+
+    $command = if ($RequiresPowerShell7) { 'pwsh.exe' } else { 'powershell.exe' }
+    $hostCommand = Get-Command $command -ErrorAction SilentlyContinue
+    if (-not $hostCommand) {
+        return [PSCustomObject]@{ Installed = $false; Version = '' }
+    }
+
+    $safeName = $ModuleName.Replace("'", "''")
+    $probe = "`$module = Get-Module -ListAvailable -Name '$safeName' | Sort-Object Version -Descending | Select-Object -First 1; if (`$module) { Write-Output ('true|' + [string]`$module.Version) } else { Write-Output 'false|' }"
+    try {
+        $result = & $hostCommand.Source -NoProfile -NonInteractive -Command $probe 2>$null | Out-String
+        $parts = $result.Trim() -split '\|', 2
+        return [PSCustomObject]@{
+            Installed = $parts.Count -gt 0 -and $parts[0] -eq 'true'
+            Version   = if ($parts.Count -gt 1) { [string]$parts[1] } else { '' }
+        }
+    } catch {
+        return [PSCustomObject]@{ Installed = $false; Version = '' }
     }
 }
 
@@ -236,7 +275,7 @@ function Invoke-ScriptHubScript {
     } else {
         $shell = (Get-Command powershell.exe -ErrorAction Stop).Source
     }
-    Start-Process -FilePath $shell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-File', $file)
+    Start-Process -FilePath $shell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'RemoteSigned', '-NoExit', '-File', $file)
     return $file
 }
 
@@ -253,7 +292,7 @@ function Install-ScriptHubDependencies {
     )
     foreach ($module in $Dependencies.Modules) {
         $safeModule = $module -replace "'", "''"
-        $lines += "Install-Module -Name '$safeModule' -Scope CurrentUser -Force -AllowClobber"
+        $lines += "if (-not (Get-Module -ListAvailable -Name '$safeModule')) { Install-Module -Name '$safeModule' -Scope CurrentUser -Force } else { Write-Host '$safeModule is already installed.' -ForegroundColor DarkGray }"
     }
     $lines += 'Write-Host "All dependencies are installed." -ForegroundColor Green'
     $lines += 'Read-Host "Press Enter to close"'
@@ -272,7 +311,7 @@ function Install-ScriptHubDependencies {
     $safeName = $CommandName -replace '[^\w\-]', '_'
     $file = Join-Path $dir ($safeName + '_dependencies.ps1')
     $lines -join [Environment]::NewLine | Set-Content -Path $file -Encoding UTF8
-    Start-Process -FilePath $shell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-File', $file)
+    Start-Process -FilePath $shell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'RemoteSigned', '-NoExit', '-File', $file)
     return $file
 }
 
