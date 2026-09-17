@@ -59,6 +59,33 @@ function New-CmdEntry {
 function Initialize-ScriptHub {
     $global:Commands.Clear()
     foreach ($cmd in (Get-ScriptHubCatalog)) { [void]$global:Commands.Add($cmd) }
+    [void](Test-ScriptHubCatalog)
+    return $global:Commands.Count
+}
+
+function Test-ScriptHubCatalog {
+    $invalid = @($global:Commands | Where-Object {
+        [string]::IsNullOrWhiteSpace($_.Id) -or
+        [string]::IsNullOrWhiteSpace($_.Name) -or
+        [string]::IsNullOrWhiteSpace($_.Category) -or
+        [string]::IsNullOrWhiteSpace($_.Script)
+    })
+    if ($invalid.Count -gt 0) {
+        throw "Catalog contains $($invalid.Count) incomplete command(s)."
+    }
+
+    $duplicateIds = @($global:Commands | Group-Object -Property Id | Where-Object Count -gt 1)
+    if ($duplicateIds.Count -gt 0) {
+        $ids = ($duplicateIds | ForEach-Object Name) -join ', '
+        throw "Catalog contains duplicate command IDs: $ids"
+    }
+
+    $duplicateNames = @($global:Commands | Group-Object -Property Name | Where-Object Count -gt 1)
+    if ($duplicateNames.Count -gt 0) {
+        $names = ($duplicateNames | ForEach-Object Name) -join ', '
+        throw "Catalog contains duplicate command names: $names"
+    }
+
     return $global:Commands.Count
 }
 
@@ -109,7 +136,7 @@ function Expand-ScriptHubPlaceholder {
         $val = [string]$Values[$key]
         if ($val -ne '') {
             $token = [regex]::Escape("<$key>")
-            $out = $out -replace $token, $val
+            $out = [regex]::Replace($out, $token, [System.Text.RegularExpressions.MatchEvaluator]{ param($match) $val })
         }
     }
     return $out
@@ -131,8 +158,25 @@ function Invoke-ScriptHubScript {
     $stamp    = Get-Date -Format 'yyyyMMdd_HHmmss'
     $file     = Join-Path $dir ($safeName + '_' + $stamp + '.ps1')
     $ScriptText | Set-Content -Path $file -Encoding UTF8
-    Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -NoExit -File `"$file`""
+    $shell = if ($PSVersionTable.PSEdition -eq 'Core') {
+        Join-Path $PSHOME 'pwsh.exe'
+    } else {
+        (Get-Command powershell.exe -ErrorAction Stop).Source
+    }
+    Start-Process -FilePath $shell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-File', $file)
     return $file
+}
+
+function Open-ScriptHubUrl {
+    param([string]$Url, [string]$Label = 'URL')
+    if ([string]::IsNullOrWhiteSpace($Url) -or $Url -match '<[^>]+>') {
+        throw "$Label is not configured. Replace the placeholder URL in ScriptHub.Core.ps1."
+    }
+    $uri = $null
+    if (-not [System.Uri]::TryCreate($Url, [System.UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -notin @('http','https')) {
+        throw "$Label is not a valid HTTP or HTTPS URL."
+    }
+    Start-Process -FilePath $Url
 }
 
 # === Build a ready-to-paste catalog block for an approved submission ===
@@ -149,12 +193,15 @@ function New-ScriptHubCatalogEntry {
         [string]$Notes
     )
     $bt = '`'          # backtick used as PowerShell line continuation
-    $q  = '"'
+    $quote = {
+        param([string]$Value)
+        return "'$(($Value -replace "'", "''") -replace '`', '``')'"
+    }
     $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine('    $d += New-CmdEntry -N ' + $q + $Name + $q + ' -Cat ' + $q + $Category + $q + ' -Sub ' + $q + $SubCategory + $q + ' ' + $bt)
-    [void]$sb.AppendLine('        -Desc ' + $q + $Description + $q + ' ' + $bt)
-    [void]$sb.AppendLine('        -PSV ' + $q + $PSVersion + $q + ' -Tags ' + $q + $Tags + $q + ' ' + $bt)
-    [void]$sb.AppendLine('        -Notes ' + $q + $Notes + $q + ' ' + $bt)
+    [void]$sb.AppendLine('    $d += New-CmdEntry -N ' + (&$quote $Name) + ' -Cat ' + (&$quote $Category) + ' -Sub ' + (&$quote $SubCategory) + ' ' + $bt)
+    [void]$sb.AppendLine('        -Desc ' + (&$quote $Description) + ' ' + $bt)
+    [void]$sb.AppendLine('        -PSV ' + (&$quote $PSVersion) + ' -Tags ' + (&$quote $Tags) + ' ' + $bt)
+    [void]$sb.AppendLine('        -Notes ' + (&$quote $Notes) + ' ' + $bt)
     [void]$sb.AppendLine("        -Scr @'")
     [void]$sb.AppendLine($ScriptText.TrimEnd())
     [void]$sb.AppendLine("'@")
@@ -162,5 +209,5 @@ function New-ScriptHubCatalogEntry {
 }
 
 # === Open the intake / feedback pages published on the ScriptHub site ===
-function Open-ScriptHubRequestForm  { Start-Process $global:ScriptHubConfig.RequestFormUrl }
-function Open-ScriptHubFeedbackForm { Start-Process $global:ScriptHubConfig.FeedbackFormUrl }
+function Open-ScriptHubRequestForm  { Open-ScriptHubUrl -Url $global:ScriptHubConfig.RequestFormUrl -Label 'Request form URL' }
+function Open-ScriptHubFeedbackForm { Open-ScriptHubUrl -Url $global:ScriptHubConfig.FeedbackFormUrl -Label 'Feedback URL' }
