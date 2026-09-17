@@ -1,0 +1,682 @@
+﻿# ============================================================================
+# ScriptHub.UI.ps1 - Presentation layer (WinForms) and application entry point
+# RUN THIS FILE to launch ScriptHub.
+#
+# Required files in the same folder:
+#   ScriptHub.Core.ps1     -> logic
+#   ScriptHub.Catalog.ps1  -> script listing
+#
+# Author: Ismael Najera
+# ============================================================================
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+# === LOAD DEPENDENCIES ===
+$here = Split-Path -Parent $MyInvocation.MyCommand.Path
+foreach ($dep in @('ScriptHub.Core.ps1', 'ScriptHub.Catalog.ps1')) {
+    $depPath = Join-Path $here $dep
+    if (-not (Test-Path $depPath)) {
+        [System.Windows.Forms.MessageBox]::Show("Missing file: $dep`nIt must be in the same folder as ScriptHub.UI.ps1.", "ScriptHub", "OK", "Error")
+        return
+    }
+    . $depPath
+}
+
+# === WIN95 STYLE CONSTANTS ===
+$script:C_Gray     = [System.Drawing.Color]::FromArgb(192,192,192)
+$script:C_DarkGray = [System.Drawing.Color]::FromArgb(128,128,128)
+$script:C_White    = [System.Drawing.Color]::White
+$script:C_Navy     = [System.Drawing.Color]::FromArgb(0,0,128)
+$script:C_TermBG   = [System.Drawing.Color]::FromArgb(1,1,30)
+$script:C_TermFG   = [System.Drawing.Color]::FromArgb(0,255,0)
+$script:C_DarkRed  = [System.Drawing.Color]::FromArgb(139,0,0)
+
+$script:StyleBold  = [System.Drawing.FontStyle]::Bold
+$script:FNormal    = New-Object System.Drawing.Font("Microsoft Sans Serif",8.25)
+$script:FBold      = New-Object System.Drawing.Font("Microsoft Sans Serif",8.25,$script:StyleBold)
+$script:FMono      = New-Object System.Drawing.Font("Consolas",9)
+$script:FTitle     = New-Object System.Drawing.Font("Microsoft Sans Serif",10,$script:StyleBold)
+
+# === HELPER: Win95 button ===
+function New-W95Btn {
+    param([string]$Text,[int]$X,[int]$Y,[int]$W=90,[int]$H=25)
+    $b = New-Object System.Windows.Forms.Button
+    $b.Text = $Text
+    $b.Location = New-Object System.Drawing.Point($X,$Y)
+    $b.Size = New-Object System.Drawing.Size($W,$H)
+    $b.Font = $script:FNormal
+    $b.FlatStyle = [System.Windows.Forms.FlatStyle]::Standard
+    $b.BackColor = $script:C_Gray
+    $b.UseVisualStyleBackColor = $false
+    return $b
+}
+
+# === HELPER: Win95 label ===
+function New-W95Lbl {
+    param([string]$Text,[int]$X,[int]$Y,[int]$W=200,[int]$H=16,[switch]$Bold)
+    $l = New-Object System.Windows.Forms.Label
+    $l.Text = $Text
+    $l.Location = New-Object System.Drawing.Point($X,$Y)
+    $l.Size = New-Object System.Drawing.Size($W,$H)
+    $l.Font = $(if ($Bold) { $script:FBold } else { $script:FNormal })
+    $l.BackColor = $script:C_Gray
+    return $l
+}
+
+# ============================================================================
+# SHOW-RUNFORM: Parameter detection + execution UI
+# ============================================================================
+function Show-RunForm {
+    param([string]$ScriptText, [string]$CmdName)
+
+    $phList    = Get-ScriptHubPlaceholder -ScriptText $ScriptText
+    $hasParams = $phList.Count -gt 0
+
+    $paramHeight = 0
+    if ($hasParams) {
+        $calc = ($phList.Count * 30) + 60
+        if ($calc -gt 300) { $calc = 300 }
+        $paramHeight = $calc
+    }
+    $formH = 550 + $paramHeight
+
+    $rf = New-Object System.Windows.Forms.Form
+    $rf.Text = "Run: $CmdName"
+    $rf.Size = New-Object System.Drawing.Size(880, $formH)
+    $rf.StartPosition = "CenterParent"
+    $rf.BackColor = $script:C_Gray
+    $rf.Font = $script:FNormal
+    $rf.MinimumSize = New-Object System.Drawing.Size(700, 450)
+
+    $y = 8
+    $inputFields = @{}
+
+    # --- Parameters section ---
+    if ($hasParams) {
+        $grpParams = New-Object System.Windows.Forms.GroupBox
+        $grpParams.Text = " Parameters detected - fill in values "
+        $grpParams.Font = $script:FBold
+        $grpParams.Location = New-Object System.Drawing.Point(8, $y)
+        $grpParams.Size = New-Object System.Drawing.Size(848, ($paramHeight - 10))
+        $grpParams.BackColor = $script:C_Gray
+        $rf.Controls.Add($grpParams)
+
+        $pnlScroll = New-Object System.Windows.Forms.Panel
+        $pnlScroll.Location = New-Object System.Drawing.Point(6, 18)
+        $pnlScroll.Size = New-Object System.Drawing.Size(836, ($paramHeight - 34))
+        $pnlScroll.AutoScroll = $true
+        $pnlScroll.BackColor = $script:C_Gray
+        $grpParams.Controls.Add($pnlScroll)
+
+        $py = 2
+        foreach ($ph in $phList) {
+            $lbl = New-Object System.Windows.Forms.Label
+            $lbl.Text = "${ph}:"
+            $lbl.Location = New-Object System.Drawing.Point(6, ($py + 3))
+            $lbl.Size = New-Object System.Drawing.Size(180, 18)
+            $lbl.Font = $script:FNormal
+            $pnlScroll.Controls.Add($lbl)
+
+            $txt = New-Object System.Windows.Forms.TextBox
+            $txt.Location = New-Object System.Drawing.Point(192, $py)
+            $txt.Size = New-Object System.Drawing.Size(610, 22)
+            $txt.Font = $script:FNormal
+            $pnlScroll.Controls.Add($txt)
+
+            $inputFields[$ph] = $txt
+            $py += 28
+        }
+        $y += $paramHeight - 5
+    }
+
+    # --- Button bar ---
+    $pnlBtns = New-Object System.Windows.Forms.Panel
+    $pnlBtns.Location = New-Object System.Drawing.Point(8, $y)
+    $pnlBtns.Size = New-Object System.Drawing.Size(848, 34)
+    $pnlBtns.BackColor = $script:C_Gray
+    $rf.Controls.Add($pnlBtns)
+
+    $bx = 0
+    if ($hasParams) {
+        $btnApply = New-W95Btn -Text "Apply Parameters" -X $bx -Y 2 -W 130 -H 28
+        $btnApply.Font = $script:FBold
+        $pnlBtns.Controls.Add($btnApply)
+        $bx += 140
+    }
+
+    $arrow = [string][char]9654
+    $btnRunPS = New-W95Btn -Text ($arrow + " Open in PowerShell") -X $bx -Y 2 -W 170 -H 28
+    $btnRunPS.Font = $script:FBold
+    $pnlBtns.Controls.Add($btnRunPS)
+    $bx += 180
+
+    $btnCopyR = New-W95Btn -Text "Copy to Clipboard" -X $bx -Y 2 -W 140 -H 28
+    $pnlBtns.Controls.Add($btnCopyR)
+
+    $btnCloseR = New-W95Btn -Text "Close" -X 758 -Y 2 -W 90 -H 28
+    $pnlBtns.Controls.Add($btnCloseR)
+
+    $y += 38
+
+    $lblPrev = New-W95Lbl -Text "Script preview (editable before running):" -X 8 -Y $y -W 400 -Bold
+    $rf.Controls.Add($lblPrev)
+    $y += 18
+
+    $txtPrev = New-Object System.Windows.Forms.RichTextBox
+    $txtPrev.Location = New-Object System.Drawing.Point(8, $y)
+    $txtPrev.Font = $script:FMono
+    $txtPrev.BackColor = $script:C_TermBG
+    $txtPrev.ForeColor = $script:C_TermFG
+    $txtPrev.BorderStyle = [System.Windows.Forms.BorderStyle]::Fixed3D
+    $txtPrev.WordWrap = $false
+    $txtPrev.ScrollBars = [System.Windows.Forms.RichTextBoxScrollBars]::Both
+    $txtPrev.Text = $ScriptText
+
+    $anchorAll = [System.Windows.Forms.AnchorStyles]::Top
+    $anchorAll = $anchorAll -bor [System.Windows.Forms.AnchorStyles]::Bottom
+    $anchorAll = $anchorAll -bor [System.Windows.Forms.AnchorStyles]::Left
+    $anchorAll = $anchorAll -bor [System.Windows.Forms.AnchorStyles]::Right
+    $txtPrev.Anchor = $anchorAll
+
+    $txtPrev.Size = New-Object System.Drawing.Size(848, ($formH - $y - 80))
+    $rf.Controls.Add($txtPrev)
+
+    # --- Events ---
+    if ($hasParams) {
+        $btnApply.Add_Click({
+            $values = @{}
+            foreach ($ph in $phList) { $values[$ph] = $inputFields[$ph].Text }
+            $txtPrev.Text = Expand-ScriptHubPlaceholder -ScriptText $ScriptText -Values $values
+        }.GetNewClosure())
+    }
+
+    $btnRunPS.Add_Click({
+        [void](Invoke-ScriptHubScript -ScriptText $txtPrev.Text -CmdName $CmdName)
+    }.GetNewClosure())
+
+    $btnCopyR.Add_Click({
+        if ($txtPrev.Text -ne "") {
+            [System.Windows.Forms.Clipboard]::SetText($txtPrev.Text)
+            [System.Windows.Forms.MessageBox]::Show("Script copied to clipboard.","Done","OK","Information")
+        }
+    }.GetNewClosure())
+
+    $btnCloseR.Add_Click({ $rf.Close() })
+    $rf.CancelButton = $btnCloseR
+
+    [void]$rf.ShowDialog()
+    $rf.Dispose()
+}
+
+# ============================================================================
+# SHOW-SUBMITFORM: Script suggestion / intake helper
+# The catalog is code-owned, so nothing is written here. The form collects the
+# proposal, opens the request form on the ScriptHub site and generates the
+# catalog block the reviewer pastes into ScriptHub.Catalog.ps1 once approved.
+# ============================================================================
+function Show-SubmitForm {
+
+    $sf = New-Object System.Windows.Forms.Form
+    $sf.Text = "Suggest a script"
+    $sf.Size = New-Object System.Drawing.Size(650, 620)
+    $sf.StartPosition = "CenterParent"
+    $sf.BackColor = $script:C_Gray
+    $sf.Font = $script:FNormal
+    $sf.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $sf.MaximizeBox = $false
+    $sf.MinimizeBox = $false
+
+    $sf.Controls.Add((New-W95Lbl -Text "Fill in the proposal, then submit it through the request form on the ScriptHub site." -X 8 -Y 10 -W 600 -Bold))
+
+    $y = 34
+    $lW = 90
+    $cX = 105
+    $cW = 505
+
+    $sf.Controls.Add((New-W95Lbl -Text "Name:" -X 8 -Y $y -W $lW -Bold))
+    $tN = New-Object System.Windows.Forms.TextBox
+    $tN.Location = New-Object System.Drawing.Point($cX, ($y-2))
+    $tN.Size = New-Object System.Drawing.Size($cW, 22)
+    $tN.Font = $script:FNormal
+    $sf.Controls.Add($tN)
+    $y += 28
+
+    $sf.Controls.Add((New-W95Lbl -Text "Category:" -X 8 -Y $y -W $lW -Bold))
+    $tCat = New-Object System.Windows.Forms.ComboBox
+    $tCat.Location = New-Object System.Drawing.Point($cX, ($y-2))
+    $tCat.Size = New-Object System.Drawing.Size(190, 22)
+    $tCat.Font = $script:FNormal
+    $tCat.FlatStyle = [System.Windows.Forms.FlatStyle]::Standard
+    $catList = @("Modules","Connection","PnP Registration","Site Management","Permissions","Recycle Bin","Files","OneDrive","Tenant","Sharing","Exchange","Teams","Entra ID","Azure","Purview","Troubleshooting","Other")
+    foreach ($c in $catList) { [void]$tCat.Items.Add($c) }
+    $sf.Controls.Add($tCat)
+
+    $sf.Controls.Add((New-W95Lbl -Text "SubCat:" -X 315 -Y $y -W 55))
+    $tSub = New-Object System.Windows.Forms.TextBox
+    $tSub.Location = New-Object System.Drawing.Point(375, ($y-2))
+    $tSub.Size = New-Object System.Drawing.Size(235, 22)
+    $tSub.Font = $script:FNormal
+    $sf.Controls.Add($tSub)
+    $y += 28
+
+    $sf.Controls.Add((New-W95Lbl -Text "PS Version:" -X 8 -Y $y -W $lW -Bold))
+    $tPSV = New-Object System.Windows.Forms.ComboBox
+    $tPSV.Location = New-Object System.Drawing.Point($cX, ($y-2))
+    $tPSV.Size = New-Object System.Drawing.Size(140, 22)
+    $tPSV.Font = $script:FNormal
+    $tPSV.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $tPSV.Items.AddRange(@("5","7","5 & 7","7 (recommended)","N/A"))
+    $tPSV.SelectedIndex = 2
+    $sf.Controls.Add($tPSV)
+    $y += 28
+
+    $sf.Controls.Add((New-W95Lbl -Text "Description:" -X 8 -Y $y -W $lW -Bold))
+    $tDesc = New-Object System.Windows.Forms.TextBox
+    $tDesc.Location = New-Object System.Drawing.Point($cX, ($y-2))
+    $tDesc.Size = New-Object System.Drawing.Size($cW, 44)
+    $tDesc.Font = $script:FNormal
+    $tDesc.Multiline = $true
+    $sf.Controls.Add($tDesc)
+    $y += 52
+
+    $sf.Controls.Add((New-W95Lbl -Text "Script:" -X 8 -Y $y -W $lW -Bold))
+    $tScr = New-Object System.Windows.Forms.TextBox
+    $tScr.Location = New-Object System.Drawing.Point($cX, ($y-2))
+    $tScr.Size = New-Object System.Drawing.Size($cW, 200)
+    $tScr.Font = $script:FMono
+    $tScr.Multiline = $true
+    $tScr.ScrollBars = [System.Windows.Forms.ScrollBars]::Both
+    $tScr.WordWrap = $false
+    $tScr.AcceptsTab = $true
+    $tScr.BackColor = $script:C_TermBG
+    $tScr.ForeColor = $script:C_TermFG
+    $sf.Controls.Add($tScr)
+    $y += 208
+
+    $sf.Controls.Add((New-W95Lbl -Text "Tags:" -X 8 -Y $y -W $lW -Bold))
+    $tTags = New-Object System.Windows.Forms.TextBox
+    $tTags.Location = New-Object System.Drawing.Point($cX, ($y-2))
+    $tTags.Size = New-Object System.Drawing.Size($cW, 22)
+    $tTags.Font = $script:FNormal
+    $sf.Controls.Add($tTags)
+    $y += 28
+
+    $sf.Controls.Add((New-W95Lbl -Text "Notes:" -X 8 -Y $y -W $lW -Bold))
+    $tNotes = New-Object System.Windows.Forms.TextBox
+    $tNotes.Location = New-Object System.Drawing.Point($cX, ($y-2))
+    $tNotes.Size = New-Object System.Drawing.Size($cW, 40)
+    $tNotes.Font = $script:FNormal
+    $tNotes.Multiline = $true
+    $sf.Controls.Add($tNotes)
+    $y += 50
+
+    $bForm = New-W95Btn -Text "Open request form" -X 8 -Y $y -W 150 -H 28
+    $bForm.Font = $script:FBold
+    $sf.Controls.Add($bForm)
+
+    $bCopy = New-W95Btn -Text "Copy catalog block" -X 168 -Y $y -W 150 -H 28
+    $sf.Controls.Add($bCopy)
+
+    $bClose = New-W95Btn -Text "Close" -X 510 -Y $y -W 100 -H 28
+    $sf.Controls.Add($bClose)
+
+    $bForm.Add_Click({ Open-ScriptHubRequestForm })
+
+    $bCopy.Add_Click({
+        if ($tN.Text.Trim() -eq "" -or $tScr.Text.Trim() -eq "") {
+            [System.Windows.Forms.MessageBox]::Show("Name and Script are required.","ScriptHub","OK","Warning")
+            return
+        }
+        $catValue = $tCat.Text.Trim()
+        if ($catValue -eq "") { $catValue = "Other" }
+
+        $block = New-ScriptHubCatalogEntry -Name $tN.Text.Trim() -Category $catValue -SubCategory $tSub.Text.Trim() -Description $tDesc.Text.Trim() -ScriptText $tScr.Text -PSVersion $tPSV.Text -Tags $tTags.Text.Trim() -Notes $tNotes.Text.Trim()
+
+        [System.Windows.Forms.Clipboard]::SetText($block)
+        [System.Windows.Forms.MessageBox]::Show("Catalog block copied. Attach it to your request; once approved it will be pasted into ScriptHub.Catalog.ps1.","ScriptHub","OK","Information")
+    })
+
+    $bClose.Add_Click({ $sf.Close() })
+    $sf.CancelButton = $bClose
+
+    [void]$sf.ShowDialog()
+    $sf.Dispose()
+}
+
+# ============================================================================
+# MAIN FORM
+# ============================================================================
+function Show-MainForm {
+
+    [void](Initialize-ScriptHub)
+    $ver = $global:ScriptHubConfig.Version
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "ScriptHub v$ver"
+    $form.Size = New-Object System.Drawing.Size(1060, 730)
+    $form.StartPosition = "CenterScreen"
+    $form.BackColor = $script:C_Gray
+    $form.Font = $script:FNormal
+    $form.MinimumSize = New-Object System.Drawing.Size(900, 600)
+    $form.KeyPreview = $true
+
+    # --- TITLE BAR ---
+    $pnlTitle = New-Object System.Windows.Forms.Panel
+    $pnlTitle.Dock = [System.Windows.Forms.DockStyle]::Top
+    $pnlTitle.Height = 30
+    $pnlTitle.BackColor = $script:C_Navy
+    $form.Controls.Add($pnlTitle)
+
+    $lblTitle = New-Object System.Windows.Forms.Label
+    $lblTitle.Text = "  ScriptHub v$ver - Curated PowerShell repository for M365 support"
+    $lblTitle.ForeColor = $script:C_White
+    $lblTitle.Font = $script:FTitle
+    $lblTitle.Dock = [System.Windows.Forms.DockStyle]::Fill
+    $lblTitle.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+    $pnlTitle.Controls.Add($lblTitle)
+
+    # --- SEARCH PANEL ---
+    $pnlSearch = New-Object System.Windows.Forms.Panel
+    $pnlSearch.Dock = [System.Windows.Forms.DockStyle]::Top
+    $pnlSearch.Height = 68
+    $pnlSearch.BackColor = $script:C_Gray
+    $form.Controls.Add($pnlSearch)
+
+    $pnlSearch.Controls.Add((New-W95Lbl -Text "Search:" -X 10 -Y 10 -W 50 -Bold))
+
+    $txtSearch = New-Object System.Windows.Forms.TextBox
+    $txtSearch.Location = New-Object System.Drawing.Point(63, 7)
+    $txtSearch.Size = New-Object System.Drawing.Size(380, 22)
+    $txtSearch.Font = $script:FNormal
+    $txtSearch.BorderStyle = [System.Windows.Forms.BorderStyle]::Fixed3D
+    $pnlSearch.Controls.Add($txtSearch)
+
+    $btnSearch = New-W95Btn -Text "Search" -X 450 -Y 6 -W 75
+    $pnlSearch.Controls.Add($btnSearch)
+    $btnClear = New-W95Btn -Text "Clear" -X 530 -Y 6 -W 75
+    $pnlSearch.Controls.Add($btnClear)
+
+    $pnlSearch.Controls.Add((New-W95Lbl -Text "Category:" -X 10 -Y 40 -W 65 -Bold))
+
+    $cmbCat = New-Object System.Windows.Forms.ComboBox
+    $cmbCat.Location = New-Object System.Drawing.Point(78, 37)
+    $cmbCat.Size = New-Object System.Drawing.Size(170, 22)
+    $cmbCat.Font = $script:FNormal
+    $cmbCat.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $pnlSearch.Controls.Add($cmbCat)
+
+    $pnlSearch.Controls.Add((New-W95Lbl -Text "PS Ver:" -X 260 -Y 40 -W 50 -Bold))
+
+    $cmbPS = New-Object System.Windows.Forms.ComboBox
+    $cmbPS.Location = New-Object System.Drawing.Point(313, 37)
+    $cmbPS.Size = New-Object System.Drawing.Size(100, 22)
+    $cmbPS.Font = $script:FNormal
+    $cmbPS.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $cmbPS.Items.AddRange(@("All","5","7","5 & 7","N/A"))
+    $cmbPS.SelectedIndex = 0
+    $pnlSearch.Controls.Add($cmbPS)
+
+    $lblCount = New-W95Lbl -Text "Results: 0" -X 620 -Y 10 -W 160 -Bold
+    $pnlSearch.Controls.Add($lblCount)
+
+    $btnSuggest  = New-W95Btn -Text "Suggest Script" -X 620 -Y 36 -W 110
+    $btnFeedback = New-W95Btn -Text "Feedback"       -X 735 -Y 36 -W 90
+    $btnSite     = New-W95Btn -Text "Open Site"      -X 830 -Y 36 -W 90
+    $btnReload   = New-W95Btn -Text "Reload"         -X 925 -Y 36 -W 90
+    $pnlSearch.Controls.Add($btnSuggest)
+    $pnlSearch.Controls.Add($btnFeedback)
+    $pnlSearch.Controls.Add($btnSite)
+    $pnlSearch.Controls.Add($btnReload)
+
+    # --- STATUS BAR ---
+    $statusBar = New-Object System.Windows.Forms.StatusBar
+    $statusBar.Text = " ScriptHub v$ver | $($global:ScriptHubConfig.Author) | Scripts: $($global:Commands.Count)"
+    $statusBar.Font = $script:FNormal
+    $form.Controls.Add($statusBar)
+
+    # --- SPLIT CONTAINER ---
+    $split = New-Object System.Windows.Forms.SplitContainer
+    $split.Dock = [System.Windows.Forms.DockStyle]::Fill
+    $split.Orientation = [System.Windows.Forms.Orientation]::Horizontal
+    $split.SplitterDistance = 250
+    $split.BackColor = $script:C_Gray
+    $split.BorderStyle = [System.Windows.Forms.BorderStyle]::Fixed3D
+    $form.Controls.Add($split)
+    $split.BringToFront()
+
+    # --- LISTVIEW ---
+    $lv = New-Object System.Windows.Forms.ListView
+    $lv.Dock = [System.Windows.Forms.DockStyle]::Fill
+    $lv.View = [System.Windows.Forms.View]::Details
+    $lv.FullRowSelect = $true
+    $lv.GridLines = $true
+    $lv.Font = $script:FNormal
+    $lv.BackColor = $script:C_White
+    $lv.BorderStyle = [System.Windows.Forms.BorderStyle]::Fixed3D
+    $lv.MultiSelect = $false
+    $lv.HideSelection = $false
+    [void]$lv.Columns.Add("Name", 230)
+    [void]$lv.Columns.Add("Category", 120)
+    [void]$lv.Columns.Add("SubCategory", 120)
+    [void]$lv.Columns.Add("PS Ver", 95)
+    [void]$lv.Columns.Add("Description", 430)
+    $split.Panel1.Controls.Add($lv)
+
+    # --- CONTEXT MENU ---
+    $ctx = New-Object System.Windows.Forms.ContextMenu
+    $ctxCopy    = New-Object System.Windows.Forms.MenuItem("Copy Script")
+    $ctxSavePS1 = New-Object System.Windows.Forms.MenuItem("Save as .ps1")
+    $ctxRun     = New-Object System.Windows.Forms.MenuItem("Run...")
+    $ctx.MenuItems.AddRange(@($ctxCopy, $ctxSavePS1, $ctxRun))
+    $lv.ContextMenu = $ctx
+
+    # --- DETAIL PANEL ---
+    $pnlDetail = New-Object System.Windows.Forms.Panel
+    $pnlDetail.Dock = [System.Windows.Forms.DockStyle]::Fill
+    $pnlDetail.BackColor = $script:C_Gray
+    $split.Panel2.Controls.Add($pnlDetail)
+
+    $pnlInfo = New-Object System.Windows.Forms.Panel
+    $pnlInfo.Dock = [System.Windows.Forms.DockStyle]::Top
+    $pnlInfo.Height = 52
+    $pnlInfo.BackColor = $script:C_Gray
+    $pnlDetail.Controls.Add($pnlInfo)
+
+    $lblDName = New-Object System.Windows.Forms.Label
+    $lblDName.Text = "Select a script to view details"
+    $lblDName.Location = New-Object System.Drawing.Point(6, 3)
+    $lblDName.Size = New-Object System.Drawing.Size(500, 16)
+    $lblDName.Font = $script:FBold
+    $lblDName.ForeColor = $script:C_Navy
+    $pnlInfo.Controls.Add($lblDName)
+
+    $lblDTags = New-Object System.Windows.Forms.Label
+    $lblDTags.Location = New-Object System.Drawing.Point(6, 20)
+    $lblDTags.Size = New-Object System.Drawing.Size(500, 14)
+    $lblDTags.Font = $script:FNormal
+    $lblDTags.ForeColor = $script:C_DarkGray
+    $pnlInfo.Controls.Add($lblDTags)
+
+    $lblDNotes = New-Object System.Windows.Forms.Label
+    $lblDNotes.Location = New-Object System.Drawing.Point(6, 35)
+    $lblDNotes.Size = New-Object System.Drawing.Size(500, 14)
+    $lblDNotes.Font = $script:FNormal
+    $lblDNotes.ForeColor = $script:C_DarkRed
+    $pnlInfo.Controls.Add($lblDNotes)
+
+    $arrow2 = [string][char]9654
+    $btnRun = New-W95Btn -Text ($arrow2 + " Run") -X 520 -Y 6 -W 100
+    $btnRun.Font = $script:FBold
+    $pnlInfo.Controls.Add($btnRun)
+
+    $btnSavePS1 = New-W95Btn -Text "Save .ps1" -X 630 -Y 6 -W 100
+    $btnSavePS1.Font = $script:FBold
+    $pnlInfo.Controls.Add($btnSavePS1)
+
+    $btnCopy = New-W95Btn -Text "Copy Script" -X 740 -Y 6 -W 110
+    $btnCopy.Font = $script:FBold
+    $pnlInfo.Controls.Add($btnCopy)
+
+    # --- Script display ---
+    $txtScript = New-Object System.Windows.Forms.RichTextBox
+    $txtScript.Dock = [System.Windows.Forms.DockStyle]::Fill
+    $txtScript.Font = $script:FMono
+    $txtScript.BackColor = $script:C_TermBG
+    $txtScript.ForeColor = $script:C_TermFG
+    $txtScript.BorderStyle = [System.Windows.Forms.BorderStyle]::Fixed3D
+    $txtScript.ReadOnly = $true
+    $txtScript.WordWrap = $false
+    $txtScript.ScrollBars = [System.Windows.Forms.RichTextBoxScrollBars]::Both
+    $pnlDetail.Controls.Add($txtScript)
+    $txtScript.BringToFront()
+
+    # === INTERNAL UI HELPERS ===
+
+    function Update-CatFilter {
+        $sel = $cmbCat.Text
+        $cmbCat.Items.Clear()
+        foreach ($c in (Get-ScriptHubCategory)) { [void]$cmbCat.Items.Add($c) }
+        $idx = $cmbCat.Items.IndexOf($sel)
+        if ($idx -ge 0) { $cmbCat.SelectedIndex = $idx } else { $cmbCat.SelectedIndex = 0 }
+    }
+
+    function Update-LV {
+        param([string]$S="",[string]$CF="All",[string]$PF="All")
+        $lv.Items.Clear()
+        foreach ($cmd in (Select-ScriptHubCommand -SearchText $S -Category $CF -PSVersion $PF)) {
+            $item = New-Object System.Windows.Forms.ListViewItem($cmd.Name)
+            [void]$item.SubItems.Add($cmd.Category)
+            [void]$item.SubItems.Add($cmd.SubCategory)
+            [void]$item.SubItems.Add($cmd.PSVersion)
+            [void]$item.SubItems.Add($cmd.Description)
+            $item.Tag = $cmd.Id
+            [void]$lv.Items.Add($item)
+        }
+        $lblCount.Text = "Results: $($lv.Items.Count)"
+        $statusBar.Text = " ScriptHub v$ver | Total: $($global:Commands.Count) | Showing: $($lv.Items.Count)"
+    }
+
+    function Show-Detail {
+        param([string]$Id)
+        $cmd = Get-ScriptHubCommandById -Id $Id
+        if ($cmd) {
+            $lblDName.Text  = "$($cmd.Name)  [$($cmd.Category) > $($cmd.SubCategory)]  [PS $($cmd.PSVersion)]"
+            $lblDTags.Text  = "Tags: $($cmd.Tags)"
+            $lblDNotes.Text = "$($cmd.Notes)"
+            $txtScript.Text = $cmd.Script
+        }
+    }
+
+    function Get-SelectedId {
+        if ($lv.SelectedItems.Count -gt 0) { return $lv.SelectedItems[0].Tag }
+        return $null
+    }
+
+    # === EVENT HANDLERS ===
+    $doSearch = { Update-LV -S $txtSearch.Text -CF $cmbCat.Text -PF $cmbPS.Text }
+
+    $btnSearch.Add_Click($doSearch)
+
+    $txtSearch.Add_KeyDown({
+        if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Enter) {
+            Update-LV -S $txtSearch.Text -CF $cmbCat.Text -PF $cmbPS.Text
+            $_.SuppressKeyPress = $true
+        }
+    })
+
+    $btnClear.Add_Click({
+        $txtSearch.Text = ""
+        $cmbCat.SelectedIndex = 0
+        $cmbPS.SelectedIndex = 0
+        Update-LV
+        $lblDName.Text = "Select a script to view details"
+        $lblDTags.Text = ""
+        $lblDNotes.Text = ""
+        $txtScript.Text = ""
+    })
+
+    $cmbCat.Add_SelectedIndexChanged($doSearch)
+    $cmbPS.Add_SelectedIndexChanged($doSearch)
+
+    $lv.Add_SelectedIndexChanged({
+        $id = Get-SelectedId
+        if ($id) { Show-Detail -Id $id }
+    })
+
+    $lv.Add_DoubleClick({
+        if ($txtScript.Text -ne "") {
+            [System.Windows.Forms.Clipboard]::SetText($txtScript.Text)
+            $statusBar.Text = " Script copied to clipboard"
+        }
+    })
+
+    $btnCopy.Add_Click({
+        if ($txtScript.Text -ne "") {
+            [System.Windows.Forms.Clipboard]::SetText($txtScript.Text)
+            $statusBar.Text = " Script copied to clipboard"
+        }
+    })
+
+    $btnSavePS1.Add_Click({
+        $id = Get-SelectedId
+        if (-not $id) {
+            [System.Windows.Forms.MessageBox]::Show("Select a script first.","Info","OK","Information")
+            return
+        }
+        $cmd = Get-ScriptHubCommandById -Id $id
+        $sfd = New-Object System.Windows.Forms.SaveFileDialog
+        $sfd.FileName = ($cmd.Name -replace '[^\w\-]','_') + ".ps1"
+        $sfd.Filter = "PowerShell Script (*.ps1)|*.ps1|All files (*.*)|*.*"
+        $sfd.Title = "Save script as .ps1"
+        if ($sfd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            [void](Save-ScriptHubScript -ScriptText $cmd.Script -Path $sfd.FileName)
+            $statusBar.Text = " Saved: $($sfd.FileName)"
+        }
+    })
+
+    $btnRun.Add_Click({
+        $id = Get-SelectedId
+        if (-not $id) {
+            [System.Windows.Forms.MessageBox]::Show("Select a script first.","Info","OK","Information")
+            return
+        }
+        $cmd = Get-ScriptHubCommandById -Id $id
+        Show-RunForm -ScriptText $cmd.Script -CmdName $cmd.Name
+    })
+
+    $btnSuggest.Add_Click({ Show-SubmitForm })
+    $btnFeedback.Add_Click({ Open-ScriptHubFeedbackForm })
+    $btnSite.Add_Click({ Start-Process $global:ScriptHubConfig.SiteUrl })
+
+    # Reload re-reads the catalog file so approved additions show up without restarting
+    $btnReload.Add_Click({
+        . (Join-Path $here 'ScriptHub.Catalog.ps1')
+        [void](Initialize-ScriptHub)
+        Update-CatFilter
+        Update-LV -S $txtSearch.Text -CF $cmbCat.Text -PF $cmbPS.Text
+        $statusBar.Text = " Catalog reloaded | Scripts: $($global:Commands.Count)"
+    })
+
+    $ctxCopy.Add_Click({ $btnCopy.PerformClick() })
+    $ctxSavePS1.Add_Click({ $btnSavePS1.PerformClick() })
+    $ctxRun.Add_Click({ $btnRun.PerformClick() })
+
+    # --- Keyboard shortcuts ---
+    $form.Add_KeyDown({
+        if ($_.Control -and $_.KeyCode -eq [System.Windows.Forms.Keys]::F) { $txtSearch.Focus(); $_.Handled = $true }
+        if ($_.Control -and $_.KeyCode -eq [System.Windows.Forms.Keys]::R) { $btnRun.PerformClick(); $_.Handled = $true }
+        if ($_.Control -and $_.KeyCode -eq [System.Windows.Forms.Keys]::N) { $btnSuggest.PerformClick(); $_.Handled = $true }
+        if ($_.KeyCode -eq [System.Windows.Forms.Keys]::F5) { $btnReload.PerformClick(); $_.Handled = $true }
+    })
+
+    # === INITIALIZE ===
+    Update-CatFilter
+    Update-LV
+
+    [void]$form.ShowDialog()
+    $form.Dispose()
+}
+
+# === LAUNCH ===
+Show-MainForm
