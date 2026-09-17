@@ -16,6 +16,7 @@ $global:ScriptHubConfig = [ordered]@{
     SiteUrl         = 'https://<TenantName>.sharepoint.com/sites/<ScriptHubSite>'
     RequestFormUrl  = 'https://<TenantName>.sharepoint.com/sites/<ScriptHubSite>/SitePages/Submit-a-Script.aspx'
     FeedbackFormUrl = 'https://<TenantName>.sharepoint.com/sites/<ScriptHubSite>/SitePages/Feedback.aspx'
+    PowerShell7Url  = 'https://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows'
     TempFolder      = (Join-Path $env:TEMP 'ScriptHub')
 }
 
@@ -45,6 +46,43 @@ function Get-ScriptHubTeamForEntry {
     if ($Category -eq 'OneDrive' -or $Name -match 'OneDrive') { return 'OneDrive' }
     if ($Name -match 'Graph PowerShell') { return 'Microsoft Graph' }
     return 'SharePoint'
+}
+
+function Get-ScriptHubDependencies {
+    param([psobject]$Command)
+
+    $scriptText = [string]$Command.Script
+    $modules = [System.Collections.Generic.List[string]]::new()
+    $addModule = {
+        param([string]$Name)
+        if (-not $modules.Contains($Name)) { [void]$modules.Add($Name) }
+    }
+
+    if ($scriptText -match '(?i)\b(PnP|Connect-PnP|Get-PnP|Set-PnP|Add-PnP|Remove-PnP|Copy-PnP|Move-PnP|Restore-PnP|New-PnP)') {
+        & $addModule 'PnP.PowerShell'
+    }
+    if ($scriptText -match '(?i)\b(Connect-SPO|Get-SPO|Set-SPO|Add-SPO|Remove-SPO|Request-SPO|Install-Module Microsoft\.Online\.SharePoint)') {
+        & $addModule 'Microsoft.Online.SharePoint.PowerShell'
+    }
+    if ($scriptText -match '(?i)\b(Connect-ExchangeOnline|Get-Mailbox|Set-Mailbox|Add-Mailbox|Remove-Mailbox|Get-MessageTrace|Search-UnifiedAuditLog|Get-UnifiedGroup|Add-UnifiedGroup|Set-UnifiedGroup)') {
+        & $addModule 'ExchangeOnlineManagement'
+    }
+    if ($scriptText -match '(?i)\b(Connect-MicrosoftTeams|Get-Team|Set-Team|Add-Team|Remove-Team|Grant-Cs|Get-Cs)') {
+        & $addModule 'MicrosoftTeams'
+    }
+    if ($scriptText -match '(?i)\b(Connect-MgGraph|Get-Mg|Set-Mg|New-Mg|Remove-Mg|Install-Module Microsoft\.Graph)') {
+        & $addModule 'Microsoft.Graph'
+    }
+    if ($scriptText -match '(?i)\b(Connect-AzAccount|Get-Az|Set-Az|New-Az|Remove-Az|Install-Module -Name Az)') {
+        & $addModule 'Az'
+    }
+
+    [PSCustomObject]@{
+        PowerShellVersion = $Command.PSVersion
+        RequiresPowerShell7 = ([string]$Command.PSVersion -match '(?i)^\s*7(?:\s*\(recommended\))?\s*$')
+        Modules = @($modules)
+        PowerShell7Url = 'https://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows'
+    }
 }
 
 # === HELPER: Command entry object ===
@@ -179,18 +217,61 @@ function Save-ScriptHubScript {
 
 # === Run a script in a new PowerShell window ===
 function Invoke-ScriptHubScript {
-    param([string]$ScriptText, [string]$CmdName)
+    param(
+        [string]$ScriptText,
+        [string]$CmdName,
+        [string]$PSVersion = '5 & 7'
+    )
     $dir = $global:ScriptHubConfig.TempFolder
     if (-not (Test-Path $dir)) { [void](New-Item -Path $dir -ItemType Directory -Force) }
     $safeName = $CmdName -replace '[^\w\-]', '_'
     $stamp    = Get-Date -Format 'yyyyMMdd_HHmmss'
     $file     = Join-Path $dir ($safeName + '_' + $stamp + '.ps1')
     $ScriptText | Set-Content -Path $file -Encoding UTF8
-    $shell = if ($PSVersionTable.PSEdition -eq 'Core') {
-        Join-Path $PSHOME 'pwsh.exe'
+    $requiresPowerShell7 = $PSVersion -match '(?i)^\s*7(?:\s*\(recommended\))?\s*$'
+    if ($requiresPowerShell7) {
+        $pwsh = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+        if (-not $pwsh) { throw 'This script requires PowerShell 7, but pwsh.exe was not found.' }
+        $shell = $pwsh.Source
     } else {
-        (Get-Command powershell.exe -ErrorAction Stop).Source
+        $shell = (Get-Command powershell.exe -ErrorAction Stop).Source
     }
+    Start-Process -FilePath $shell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-File', $file)
+    return $file
+}
+
+function Install-ScriptHubDependencies {
+    param(
+        [psobject]$Dependencies,
+        [string]$CommandName = 'ScriptHub dependencies'
+    )
+    if (-not $Dependencies.Modules -or @($Dependencies.Modules).Count -eq 0) { return $null }
+
+    $lines = @(
+        '$ErrorActionPreference = ''Stop'''
+        'Write-Host "Installing ScriptHub dependencies..." -ForegroundColor Cyan'
+    )
+    foreach ($module in $Dependencies.Modules) {
+        $safeModule = $module -replace "'", "''"
+        $lines += "Install-Module -Name '$safeModule' -Scope CurrentUser -Force -AllowClobber"
+    }
+    $lines += 'Write-Host "All dependencies are installed." -ForegroundColor Green'
+    $lines += 'Read-Host "Press Enter to close"'
+
+    $shell = $null
+    if ($Dependencies.RequiresPowerShell7) {
+        $pwsh = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+        if (-not $pwsh) { throw 'This script requires PowerShell 7. Install PowerShell 7 first.' }
+        $shell = $pwsh.Source
+    } else {
+        $shell = (Get-Command powershell.exe -ErrorAction Stop).Source
+    }
+
+    $dir = $global:ScriptHubConfig.TempFolder
+    if (-not (Test-Path $dir)) { [void](New-Item -Path $dir -ItemType Directory -Force) }
+    $safeName = $CommandName -replace '[^\w\-]', '_'
+    $file = Join-Path $dir ($safeName + '_dependencies.ps1')
+    $lines -join [Environment]::NewLine | Set-Content -Path $file -Encoding UTF8
     Start-Process -FilePath $shell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-File', $file)
     return $file
 }

@@ -96,7 +96,11 @@ function New-W95Lbl {
 # SHOW-RUNFORM: Parameter detection + execution UI
 # ============================================================================
 function Show-RunForm {
-    param([string]$ScriptText, [string]$CmdName)
+    param(
+        [string]$ScriptText,
+        [string]$CmdName,
+        [string]$PSVersion = '5 & 7'
+    )
 
     $phList    = Get-ScriptHubPlaceholder -ScriptText $ScriptText
     $hasParams = $phList.Count -gt 0
@@ -230,7 +234,7 @@ function Show-RunForm {
             [System.Windows.Forms.MessageBoxButtons]::YesNo,
             [System.Windows.Forms.MessageBoxIcon]::Warning)
         if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) { return }
-        [void](Invoke-ScriptHubScript -ScriptText $txtPrev.Text -CmdName $CmdName)
+        [void](Invoke-ScriptHubScript -ScriptText $txtPrev.Text -CmdName $CmdName -PSVersion $PSVersion)
     }.GetNewClosure())
 
     $btnCopyR.Add_Click({
@@ -555,6 +559,30 @@ function Show-MainForm {
     $pnlInfo.BackColor = $script:C_White
     $pnlDetail.Controls.Add($pnlInfo)
 
+    $pnlDeps = New-Object System.Windows.Forms.Panel
+    $pnlDeps.Dock = [System.Windows.Forms.DockStyle]::Top
+    $pnlDeps.Height = 58
+    $pnlDeps.BackColor = [System.Drawing.Color]::FromArgb(250,251,253)
+    $pnlDeps.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $pnlDetail.Controls.Add($pnlDeps)
+
+    $lblDeps = New-Object System.Windows.Forms.Label
+    $lblDeps.Text = "Dependencies: select a script"
+    $lblDeps.Location = New-Object System.Drawing.Point(8, 7)
+    $lblDeps.Size = New-Object System.Drawing.Size(560, 42)
+    $lblDeps.Font = $script:FNormal
+    $lblDeps.ForeColor = $script:C_DarkGray
+    $pnlDeps.Controls.Add($lblDeps)
+
+    $btnInstallDeps = New-W95Btn -Text "Install modules" -X 620 -Y 14 -W 135 -H 28
+    $btnInstallDeps.Font = $script:FBold
+    $btnInstallDeps.Enabled = $false
+    $pnlDeps.Controls.Add($btnInstallDeps)
+
+    $btnInstallPS7 = New-W95Btn -Text "Get PowerShell 7" -X 765 -Y 14 -W 135 -H 28
+    $btnInstallPS7.Enabled = $false
+    $pnlDeps.Controls.Add($btnInstallPS7)
+
     $lblDName = New-Object System.Windows.Forms.Label
     $lblDName.Text = "Select a script to view details"
     $lblDName.Location = New-Object System.Drawing.Point(6, 3)
@@ -649,13 +677,19 @@ function Show-MainForm {
         param([string]$Id)
         $cmd = Get-ScriptHubCommandById -Id $Id
         if ($cmd) {
+            $deps = Get-ScriptHubDependencies -Command $cmd
             $lblDName.Text  = "$($cmd.Name)  [$($cmd.Team) > $($cmd.Category) > $($cmd.SubCategory)]  [PS $($cmd.PSVersion)]"
             $lblDTags.Text  = "Tags: $($cmd.Tags)"
             $lblDNotes.Text = "$($cmd.Notes)"
+            $moduleText = if (@($deps.Modules).Count -gt 0) { @($deps.Modules) -join ', ' } else { 'None detected' }
+            $psText = if ($deps.RequiresPowerShell7) { 'PowerShell 7 required' } else { "PowerShell $($deps.PowerShellVersion)" }
+            $lblDeps.Text = "Dependencies: $moduleText`nRuntime: $psText"
             $txtScript.Text = $cmd.Script
             $btnRun.Enabled = $true
             $btnSavePS1.Enabled = $true
             $btnCopy.Enabled = $true
+            $btnInstallDeps.Enabled = @($deps.Modules).Count -gt 0
+            $btnInstallPS7.Enabled = $deps.RequiresPowerShell7
         }
     }
 
@@ -685,10 +719,13 @@ function Show-MainForm {
         $lblDName.Text = "Select a script to view details"
         $lblDTags.Text = ""
         $lblDNotes.Text = ""
+        $lblDeps.Text = "Dependencies: select a script"
         $txtScript.Text = ""
         $btnRun.Enabled = $false
         $btnSavePS1.Enabled = $false
         $btnCopy.Enabled = $false
+        $btnInstallDeps.Enabled = $false
+        $btnInstallPS7.Enabled = $false
     })
 
     $cmbCat.Add_SelectedIndexChanged($doSearch)
@@ -742,7 +779,28 @@ function Show-MainForm {
             return
         }
         $cmd = Get-ScriptHubCommandById -Id $id
-        Show-RunForm -ScriptText $cmd.Script -CmdName $cmd.Name
+        Show-RunForm -ScriptText $cmd.Script -CmdName $cmd.Name -PSVersion $cmd.PSVersion
+    })
+
+    $btnInstallDeps.Add_Click({
+        $id = Get-SelectedId
+        if (-not $id) { return }
+        try {
+            $cmd = Get-ScriptHubCommandById -Id $id
+            $deps = Get-ScriptHubDependencies -Command $cmd
+            [void](Install-ScriptHubDependencies -Dependencies $deps -CommandName $cmd.Name)
+            $statusBar.Text = " Dependency installer opened for: $($cmd.Name)"
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "Dependency installation", "OK", "Warning")
+        }
+    })
+
+    $btnInstallPS7.Add_Click({
+        try {
+            Open-ScriptHubUrl -Url $global:ScriptHubConfig.PowerShell7Url -Label 'PowerShell 7 URL'
+        } catch {
+            [System.Diagnostics.Process]::Start('https://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows')
+        }
     })
 
     $btnSuggest.Add_Click({
