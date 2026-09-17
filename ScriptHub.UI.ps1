@@ -12,6 +12,20 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class ScriptHubNative
+{
+    [DllImport("user32.dll")]
+    public static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+}
+'@
+
 # === LOAD DEPENDENCIES ===
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 foreach ($dep in @('ScriptHub.Core.ps1', 'ScriptHub.Catalog.ps1')) {
@@ -23,17 +37,24 @@ foreach ($dep in @('ScriptHub.Core.ps1', 'ScriptHub.Catalog.ps1')) {
     . $depPath
 }
 
-# === WIN95 STYLE CONSTANTS ===
-$script:C_Gray     = [System.Drawing.Color]::FromArgb(245,247,250)
-$script:C_DarkGray = [System.Drawing.Color]::FromArgb(95,99,104)
+# === MODERN WINDOWS 11 STYLE CONSTANTS ===
+$script:C_Gray     = [System.Drawing.Color]::FromArgb(243,246,250)
+$script:C_DarkGray = [System.Drawing.Color]::FromArgb(96,103,112)
 $script:C_White    = [System.Drawing.Color]::White
-$script:C_Navy     = [System.Drawing.Color]::FromArgb(0,95,184)
-$script:C_TermBG   = [System.Drawing.Color]::FromArgb(30,34,40)
+$script:C_Navy     = [System.Drawing.Color]::FromArgb(0,103,192)
+$script:C_TitleBar = [System.Drawing.Color]::FromArgb(18,18,18)
+$script:C_TitleBarAlt = [System.Drawing.Color]::FromArgb(32,32,32)
+$script:C_TermBG   = [System.Drawing.Color]::FromArgb(27,31,38)
 $script:C_TermFG   = [System.Drawing.Color]::FromArgb(232,236,241)
 $script:C_DarkRed  = [System.Drawing.Color]::FromArgb(196,61,61)
-$script:C_Border   = [System.Drawing.Color]::FromArgb(218,222,228)
+$script:C_Border   = [System.Drawing.Color]::FromArgb(220,225,232)
 $script:C_Accent   = [System.Drawing.Color]::FromArgb(0,120,212)
-$script:C_AccentHover = [System.Drawing.Color]::FromArgb(16,110,190)
+$script:C_AccentHover = [System.Drawing.Color]::FromArgb(0,100,190)
+$script:C_AccentPressed = [System.Drawing.Color]::FromArgb(0,88,170)
+$script:C_Surface  = [System.Drawing.Color]::FromArgb(250,250,250)
+$script:C_SurfaceAlt = [System.Drawing.Color]::FromArgb(244,246,249)
+$script:C_TextPrimary = [System.Drawing.Color]::FromArgb(28,28,28)
+$script:C_TextSecondary = [System.Drawing.Color]::FromArgb(96,103,112)
 
 $script:StyleBold  = [System.Drawing.FontStyle]::Bold
 $script:FNormal    = New-Object System.Drawing.Font("Segoe UI",9)
@@ -46,6 +67,7 @@ function Set-RoundedCorners {
         [System.Windows.Forms.Control]$Control,
         [int]$Radius = 10
     )
+    if ($Control -eq $null) { return }
     if ($Control.Width -le 0 -or $Control.Height -le 0) { return }
     $path = New-Object System.Drawing.Drawing2D.GraphicsPath
     $diameter = $Radius * 2
@@ -60,24 +82,55 @@ function Set-RoundedCorners {
     $path.Dispose()
 }
 
-# === HELPER: Win95 button ===
 function New-W95Btn {
-    param([string]$Text,[int]$X,[int]$Y,[int]$W=90,[int]$H=25)
+    param([string]$Text,[int]$X,[int]$Y,[int]$W=90,[int]$H=28)
     $b = New-Object System.Windows.Forms.Button
     $b.Text = $Text
     $b.Location = New-Object System.Drawing.Point($X,$Y)
     $b.Size = New-Object System.Drawing.Size($W,$H)
     $b.Font = $script:FNormal
     $b.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $b.FlatAppearance.BorderSize = 0
     $b.FlatAppearance.BorderColor = $script:C_Border
-    $b.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(232,240,250)
-    $b.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(214,229,246)
-    $b.BackColor = $script:C_White
-    $b.ForeColor = [System.Drawing.Color]::FromArgb(32,35,39)
     $b.UseVisualStyleBackColor = $false
-    Set-RoundedCorners -Control $b -Radius 6
-    $b.Add_Resize({ Set-RoundedCorners -Control $this -Radius 6 })
+    $b.BackColor = $script:C_White
+    $b.ForeColor = $script:C_TextPrimary
+    $b.Padding = New-Object System.Windows.Forms.Padding(6,0,6,0)
+    $b.Margin = New-Object System.Windows.Forms.Padding(0)
+    $b.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
+    Set-RoundedCorners -Control $b -Radius 8
+    $b.Add_Resize({ Set-RoundedCorners -Control $this -Radius 8 })
     return $b
+}
+
+function New-TitleBarButton {
+    param(
+        [string]$Text,
+        [string]$Action,
+        [int]$Width = 46,
+        [int]$Height = 32
+    )
+    $btn = New-Object System.Windows.Forms.Button
+    $btn.Text = $Text
+    $btn.Size = New-Object System.Drawing.Size($Width, $Height)
+    $btn.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $btn.FlatAppearance.BorderSize = 0
+    $btn.ForeColor = [System.Drawing.Color]::White
+    $btn.BackColor = [System.Drawing.Color]::Transparent
+    $btn.Font = New-Object System.Drawing.Font("Segoe UI",10,[System.Drawing.FontStyle]::Bold)
+    $btn.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
+    $btn.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $btn.Tag = $Action
+    $btn.Add_MouseEnter({
+        if ($this.Tag -eq 'close') { $this.BackColor = [System.Drawing.Color]::FromArgb(232,17,35) }
+        else { $this.BackColor = [System.Drawing.Color]::FromArgb(255,255,255,255) } 
+        $this.ForeColor = [System.Drawing.Color]::White
+    })
+    $btn.Add_MouseLeave({
+        $this.BackColor = [System.Drawing.Color]::Transparent
+        $this.ForeColor = [System.Drawing.Color]::White
+    })
+    return $btn
 }
 
 # === HELPER: Win95 label ===
@@ -413,88 +466,151 @@ function Show-MainForm {
     $form.Text = "ScriptHub v$ver"
     $form.Size = New-Object System.Drawing.Size(1060, 730)
     $form.StartPosition = "CenterScreen"
-    $form.BackColor = $script:C_Gray
+    $form.BackColor = $script:C_Surface
     $form.Font = $script:FNormal
     $form.MinimumSize = New-Object System.Drawing.Size(900, 600)
     $form.KeyPreview = $true
-    $form.Padding = New-Object System.Windows.Forms.Padding(10)
+    $form.Padding = New-Object System.Windows.Forms.Padding(0)
+    $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+    try { $form.DoubleBuffered = $true } catch { }
 
     # --- TITLE BAR ---
     $pnlTitle = New-Object System.Windows.Forms.Panel
     $pnlTitle.Dock = [System.Windows.Forms.DockStyle]::Top
-    $pnlTitle.Height = 42
-    $pnlTitle.BackColor = $script:C_Navy
+    $pnlTitle.Height = 40
+    $pnlTitle.BackColor = $script:C_TitleBar
+    $pnlTitle.Padding = New-Object System.Windows.Forms.Padding(0)
     $form.Controls.Add($pnlTitle)
 
     $lblTitle = New-Object System.Windows.Forms.Label
-    $lblTitle.Text = "  ScriptHub  |  Curated PowerShell repository for M365 support"
+    $lblTitle.Text = "ScriptHub"
     $lblTitle.ForeColor = $script:C_White
-    $lblTitle.Font = $script:FTitle
+    $lblTitle.Font = New-Object System.Drawing.Font("Segoe UI",10,[System.Drawing.FontStyle]::Bold)
     $lblTitle.Dock = [System.Windows.Forms.DockStyle]::Fill
     $lblTitle.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+    $lblTitle.Padding = New-Object System.Windows.Forms.Padding(14,0,0,0)
     $pnlTitle.Controls.Add($lblTitle)
+
+    $pnlTitleButtons = New-Object System.Windows.Forms.Panel
+    $pnlTitleButtons.Dock = [System.Windows.Forms.DockStyle]::Right
+    $pnlTitleButtons.Width = 138
+    $pnlTitleButtons.BackColor = [System.Drawing.Color]::Transparent
+    $pnlTitle.Controls.Add($pnlTitleButtons)
+
+    $btnMin = New-TitleBarButton -Text "—" -Action "min" -Width 46 -Height 40
+    $btnMax = New-TitleBarButton -Text "□" -Action "max" -Width 46 -Height 40
+    $btnClose = New-TitleBarButton -Text "✕" -Action "close" -Width 46 -Height 40
+    $btnMin.Dock = [System.Windows.Forms.DockStyle]::Right
+    $btnMax.Dock = [System.Windows.Forms.DockStyle]::Right
+    $btnClose.Dock = [System.Windows.Forms.DockStyle]::Right
+    $pnlTitleButtons.Controls.Add($btnMin)
+    $pnlTitleButtons.Controls.Add($btnMax)
+    $pnlTitleButtons.Controls.Add($btnClose)
+
+    $btnMin.Add_Click({ $form.WindowState = [System.Windows.Forms.FormWindowState]::Minimized })
+    $btnMax.Add_Click({
+        if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Maximized) {
+            $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+            $btnMax.Text = "□"
+        } else {
+            $form.WindowState = [System.Windows.Forms.FormWindowState]::Maximized
+            $btnMax.Text = "❐"
+        }
+    })
+    $btnClose.Add_Click({ $form.Close() })
+
+    function Enable-TitleBarDrag {
+        param(
+            [Parameter(Mandatory = $true)]
+            [System.Windows.Forms.Control]$Control
+        )
+
+        $Control.Add_MouseDown({
+            if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+                [void][ScriptHubNative]::ReleaseCapture()
+                [void][ScriptHubNative]::SendMessage($form.Handle, 0xA1, [IntPtr]2, [IntPtr]0)
+            }
+        })
+    }
+
+    Enable-TitleBarDrag -Control $pnlTitle
+    Enable-TitleBarDrag -Control $lblTitle
+    Enable-TitleBarDrag -Control $pnlTitleButtons
 
     # --- SEARCH PANEL ---
     $pnlSearch = New-Object System.Windows.Forms.Panel
     $pnlSearch.Dock = [System.Windows.Forms.DockStyle]::Top
-    $pnlSearch.Height = 78
+    $pnlSearch.Height = 86
     $pnlSearch.BackColor = $script:C_Gray
     $form.Controls.Add($pnlSearch)
 
-    $pnlSearch.Controls.Add((New-W95Lbl -Text "Search:" -X 10 -Y 10 -W 50 -Bold))
+    $pnlSearch.Controls.Add((New-W95Lbl -Text "Search:" -X 10 -Y 12 -W 50 -Bold))
 
     $txtSearch = New-Object System.Windows.Forms.TextBox
-    $txtSearch.Location = New-Object System.Drawing.Point(63, 7)
-    $txtSearch.Size = New-Object System.Drawing.Size(380, 22)
+    $txtSearch.Location = New-Object System.Drawing.Point(63, 9)
+    $txtSearch.Size = New-Object System.Drawing.Size(380, 28)
     $txtSearch.Font = $script:FNormal
-    $txtSearch.BorderStyle = [System.Windows.Forms.BorderStyle]::Fixed3D
+    $txtSearch.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $txtSearch.BackColor = $script:C_White
+    $txtSearch.ForeColor = $script:C_TextPrimary
+    $txtSearch.Multiline = $false
     $pnlSearch.Controls.Add($txtSearch)
 
-    $btnSearch = New-W95Btn -Text "Search" -X 450 -Y 6 -W 75
+    $btnSearch = New-W95Btn -Text "Search" -X 450 -Y 8 -W 80 -H 30
     $btnSearch.BackColor = $script:C_Accent
     $btnSearch.ForeColor = $script:C_White
     $btnSearch.FlatAppearance.BorderColor = $script:C_Accent
     $btnSearch.FlatAppearance.MouseOverBackColor = $script:C_AccentHover
+    $btnSearch.FlatAppearance.MouseDownBackColor = $script:C_AccentPressed
     $pnlSearch.Controls.Add($btnSearch)
-    $btnClear = New-W95Btn -Text "Clear" -X 530 -Y 6 -W 75
+    $btnClear = New-W95Btn -Text "Clear" -X 535 -Y 8 -W 75 -H 30
     $pnlSearch.Controls.Add($btnClear)
 
-    $pnlSearch.Controls.Add((New-W95Lbl -Text "Category:" -X 10 -Y 40 -W 65 -Bold))
+    $pnlSearch.Controls.Add((New-W95Lbl -Text "Category:" -X 10 -Y 48 -W 65 -Bold))
 
     $cmbCat = New-Object System.Windows.Forms.ComboBox
-    $cmbCat.Location = New-Object System.Drawing.Point(78, 37)
-    $cmbCat.Size = New-Object System.Drawing.Size(170, 22)
+    $cmbCat.Location = New-Object System.Drawing.Point(78, 45)
+    $cmbCat.Size = New-Object System.Drawing.Size(170, 28)
     $cmbCat.Font = $script:FNormal
     $cmbCat.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $cmbCat.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $cmbCat.BackColor = $script:C_White
+    $cmbCat.ForeColor = $script:C_TextPrimary
     $pnlSearch.Controls.Add($cmbCat)
 
-    $pnlSearch.Controls.Add((New-W95Lbl -Text "PS Ver:" -X 260 -Y 40 -W 50 -Bold))
+    $pnlSearch.Controls.Add((New-W95Lbl -Text "PS Ver:" -X 260 -Y 48 -W 50 -Bold))
 
     $cmbPS = New-Object System.Windows.Forms.ComboBox
-    $cmbPS.Location = New-Object System.Drawing.Point(313, 37)
-    $cmbPS.Size = New-Object System.Drawing.Size(100, 22)
+    $cmbPS.Location = New-Object System.Drawing.Point(313, 45)
+    $cmbPS.Size = New-Object System.Drawing.Size(100, 28)
     $cmbPS.Font = $script:FNormal
     $cmbPS.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $cmbPS.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $cmbPS.BackColor = $script:C_White
+    $cmbPS.ForeColor = $script:C_TextPrimary
     $cmbPS.Items.AddRange(@("All","5","7","5 & 7","N/A"))
     $cmbPS.SelectedIndex = 0
     $pnlSearch.Controls.Add($cmbPS)
 
-    $pnlSearch.Controls.Add((New-W95Lbl -Text "Team:" -X 425 -Y 40 -W 45 -Bold))
+    $pnlSearch.Controls.Add((New-W95Lbl -Text "Team:" -X 425 -Y 48 -W 45 -Bold))
 
     $cmbTeam = New-Object System.Windows.Forms.ComboBox
-    $cmbTeam.Location = New-Object System.Drawing.Point(472, 37)
-    $cmbTeam.Size = New-Object System.Drawing.Size(135, 22)
+    $cmbTeam.Location = New-Object System.Drawing.Point(472, 45)
+    $cmbTeam.Size = New-Object System.Drawing.Size(135, 28)
     $cmbTeam.Font = $script:FNormal
     $cmbTeam.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $cmbTeam.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $cmbTeam.BackColor = $script:C_White
+    $cmbTeam.ForeColor = $script:C_TextPrimary
     $pnlSearch.Controls.Add($cmbTeam)
 
-    $lblCount = New-W95Lbl -Text "Results: 0" -X 620 -Y 10 -W 160 -Bold
+    $lblCount = New-W95Lbl -Text "Results: 0" -X 620 -Y 12 -W 160 -Bold
     $pnlSearch.Controls.Add($lblCount)
 
-    $btnSuggest  = New-W95Btn -Text "Suggest Script" -X 620 -Y 36 -W 110
-    $btnFeedback = New-W95Btn -Text "Feedback"       -X 735 -Y 36 -W 90
-    $btnSite     = New-W95Btn -Text "Open Site"      -X 830 -Y 36 -W 90
-    $btnReload   = New-W95Btn -Text "Reload"         -X 925 -Y 36 -W 90
+    $btnSuggest  = New-W95Btn -Text "Suggest" -X 620 -Y 41 -W 95 -H 30
+    $btnFeedback = New-W95Btn -Text "Feedback" -X 720 -Y 41 -W 90 -H 30
+    $btnSite     = New-W95Btn -Text "Open Site" -X 815 -Y 41 -W 90 -H 30
+    $btnReload   = New-W95Btn -Text "Reload" -X 910 -Y 41 -W 90 -H 30
     $pnlSearch.Controls.Add($btnSuggest)
     $pnlSearch.Controls.Add($btnFeedback)
     $pnlSearch.Controls.Add($btnSite)
@@ -507,10 +623,11 @@ function Show-MainForm {
     $statusBar.Height = 26
     $statusBar.Dock = [System.Windows.Forms.DockStyle]::Bottom
     $statusBar.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
-    $statusBar.Padding = New-Object System.Windows.Forms.Padding(8,0,0,0)
-    $statusBar.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $statusBar.ForeColor = $script:C_DarkGray
-    $statusBar.BackColor = $script:C_White
+    $statusBar.Padding = New-Object System.Windows.Forms.Padding(10,0,0,0)
+    $statusBar.BorderStyle = [System.Windows.Forms.BorderStyle]::None
+    $statusBar.ForeColor = $script:C_TextSecondary
+    $statusBar.BackColor = $script:C_SurfaceAlt
+    $statusBar.Margin = New-Object System.Windows.Forms.Padding(0)
     $form.Controls.Add($statusBar)
 
     # --- SPLIT CONTAINER ---
@@ -521,7 +638,12 @@ function Show-MainForm {
     $split.BackColor = $script:C_Gray
     $split.BorderStyle = [System.Windows.Forms.BorderStyle]::None
     $form.Controls.Add($split)
-    $split.BringToFront()
+
+    # Keep the custom chrome on top and the content below it.
+    $form.Controls.SetChildIndex($split, 0)
+    $form.Controls.SetChildIndex($statusBar, 1)
+    $form.Controls.SetChildIndex($pnlSearch, 2)
+    $form.Controls.SetChildIndex($pnlTitle, $form.Controls.Count - 1)
 
     # --- LISTVIEW ---
     $lv = New-Object System.Windows.Forms.ListView
@@ -573,19 +695,35 @@ function Show-MainForm {
     $lblDeps = New-Object System.Windows.Forms.Label
     $lblDeps.Text = "Dependencies: select a script"
     $lblDeps.Location = New-Object System.Drawing.Point(8, 7)
-    $lblDeps.Size = New-Object System.Drawing.Size(560, 42)
+    $lblDeps.Size = New-Object System.Drawing.Size(430, 42)
     $lblDeps.Font = $script:FNormal
     $lblDeps.ForeColor = $script:C_DarkGray
+    $lblDeps.Anchor = [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
     $pnlDeps.Controls.Add($lblDeps)
 
     $btnInstallDeps = New-W95Btn -Text "Install modules" -X 620 -Y 14 -W 135 -H 28
     $btnInstallDeps.Font = $script:FBold
     $btnInstallDeps.Enabled = $false
+    $btnInstallDeps.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
     $pnlDeps.Controls.Add($btnInstallDeps)
 
     $btnInstallPS7 = New-W95Btn -Text "Get PowerShell 7" -X 765 -Y 14 -W 135 -H 28
     $btnInstallPS7.Enabled = $false
+    $btnInstallPS7.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
     $pnlDeps.Controls.Add($btnInstallPS7)
+
+    $pnlDeps.Add_Resize({
+        $rightPad = 14
+        $gap = 12
+        $btnW = 135
+        $btnH = 28
+        $btnY = 14
+        $x1 = $this.Width - ($btnW + $rightPad)
+        $x2 = $x1 - ($btnW + $gap)
+        $btnInstallDeps.Location = New-Object System.Drawing.Point($x2, $btnY)
+        $btnInstallPS7.Location = New-Object System.Drawing.Point($x1, $btnY)
+        $lblDeps.Width = [Math]::Max(180, ($x2 - 20))
+    })
 
     $lblDName = New-Object System.Windows.Forms.Label
     $lblDName.Text = "Select a script to view details"
