@@ -29,6 +29,24 @@ function Get-CmdId {
     return ([System.BitConverter]::ToString($bytes) -replace '-','').Substring(0,8).ToLower()
 }
 
+function Get-ScriptHubTeamForEntry {
+    param(
+        [string]$Name,
+        [string]$Category,
+        [string]$ScriptText
+    )
+    if ($Category -eq 'Teams' -or $Name -match 'Teams') { return 'Teams' }
+    if ($Name -match 'all M365 workloads') { return 'Microsoft 365' }
+    if ($Category -eq 'PnP Registration' -or $Name -match 'PnP') { return 'PnP PowerShell' }
+    if ($Category -eq 'Exchange' -or $Name -match 'Exchange|Mailbox|Message Trace|M365 Group') { return 'Exchange Online' }
+    if ($Category -eq 'Entra ID' -or $Name -match 'Entra ID|Azure AD') { return 'Entra ID' }
+    if ($Category -eq 'Azure' -or $Name -match '^Azure') { return 'Azure' }
+    if ($Category -eq 'Purview' -or $Name -match 'Audit Log') { return 'Purview' }
+    if ($Category -eq 'OneDrive' -or $Name -match 'OneDrive') { return 'OneDrive' }
+    if ($Name -match 'Graph PowerShell') { return 'Microsoft Graph' }
+    return 'SharePoint'
+}
+
 # === HELPER: Command entry object ===
 function New-CmdEntry {
     param(
@@ -40,7 +58,8 @@ function New-CmdEntry {
         [string]$PSV,   # PowerShell version
         [string]$Tags,  # Comma separated tags
         [string]$Notes, # Notes / warnings
-        [string]$Id
+        [string]$Id,
+        [string]$Team = ''
     )
     [PSCustomObject]@{
         Id          = $(if ($Id) { $Id } else { Get-CmdId -Name $N })
@@ -52,6 +71,9 @@ function New-CmdEntry {
         PSVersion   = $PSV
         Tags        = $Tags
         Notes       = $Notes
+        Team        = $(if ([string]::IsNullOrWhiteSpace($Team)) {
+            Get-ScriptHubTeamForEntry -Name $N -Category $Cat -ScriptText $Scr
+        } else { $Team })
     }
 }
 
@@ -94,15 +116,17 @@ function Select-ScriptHubCommand {
     param(
         [string]$SearchText = '',
         [string]$Category   = 'All',
-        [string]$PSVersion  = 'All'
+        [string]$PSVersion  = 'All',
+        [string]$Team       = 'All'
     )
     $res = $global:Commands
     if ($Category  -ne 'All') { $res = $res | Where-Object { $_.Category -eq $Category } }
     if ($PSVersion -ne 'All') { $res = $res | Where-Object { $_.PSVersion -like "*$PSVersion*" } }
+    if ($Team      -ne 'All') { $res = $res | Where-Object { $_.Team -eq $Team } }
     if ($SearchText.Trim() -ne '') {
         $s = $SearchText.ToLower()
         $res = $res | Where-Object {
-            "$($_.Name) $($_.Description) $($_.Script) $($_.Tags) $($_.Category) $($_.SubCategory) $($_.Notes)".ToLower().Contains($s)
+            "$($_.Name) $($_.Description) $($_.Script) $($_.Tags) $($_.Category) $($_.SubCategory) $($_.Notes) $($_.Team)".ToLower().Contains($s)
         }
     }
     return @($res)
@@ -115,6 +139,10 @@ function Get-ScriptHubCommandById {
 
 function Get-ScriptHubCategory {
     return @('All') + @($global:Commands | ForEach-Object { $_.Category } | Sort-Object -Unique)
+}
+
+function Get-ScriptHubTeam {
+    return @('All') + @($global:Commands | ForEach-Object { $_.Team } | Sort-Object -Unique)
 }
 
 # === Placeholder detection: <Something> tokens inside a script body ===
@@ -190,9 +218,13 @@ function New-ScriptHubCatalogEntry {
         [string]$ScriptText,
         [string]$PSVersion,
         [string]$Tags,
-        [string]$Notes
+        [string]$Notes,
+        [string]$Team = ''
     )
     $bt = '`'          # backtick used as PowerShell line continuation
+    $teamValue = if ([string]::IsNullOrWhiteSpace($Team)) {
+        Get-ScriptHubTeamForEntry -Name $Name -Category $Category -ScriptText $ScriptText
+    } else { $Team }
     $quote = {
         param([string]$Value)
         return "'$(($Value -replace "'", "''") -replace '`', '``')'"
@@ -201,7 +233,7 @@ function New-ScriptHubCatalogEntry {
     [void]$sb.AppendLine('    $d += New-CmdEntry -N ' + (&$quote $Name) + ' -Cat ' + (&$quote $Category) + ' -Sub ' + (&$quote $SubCategory) + ' ' + $bt)
     [void]$sb.AppendLine('        -Desc ' + (&$quote $Description) + ' ' + $bt)
     [void]$sb.AppendLine('        -PSV ' + (&$quote $PSVersion) + ' -Tags ' + (&$quote $Tags) + ' ' + $bt)
-    [void]$sb.AppendLine('        -Notes ' + (&$quote $Notes) + ' ' + $bt)
+    [void]$sb.AppendLine('        -Notes ' + (&$quote $Notes) + ' -Team ' + (&$quote $teamValue) + ' ' + $bt)
     [void]$sb.AppendLine("        -Scr @'")
     [void]$sb.AppendLine($ScriptText.TrimEnd())
     [void]$sb.AppendLine("'@")

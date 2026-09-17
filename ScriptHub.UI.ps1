@@ -471,6 +471,15 @@ function Show-MainForm {
     $cmbPS.SelectedIndex = 0
     $pnlSearch.Controls.Add($cmbPS)
 
+    $pnlSearch.Controls.Add((New-W95Lbl -Text "Team:" -X 425 -Y 40 -W 45 -Bold))
+
+    $cmbTeam = New-Object System.Windows.Forms.ComboBox
+    $cmbTeam.Location = New-Object System.Drawing.Point(472, 37)
+    $cmbTeam.Size = New-Object System.Drawing.Size(135, 22)
+    $cmbTeam.Font = $script:FNormal
+    $cmbTeam.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $pnlSearch.Controls.Add($cmbTeam)
+
     $lblCount = New-W95Lbl -Text "Results: 0" -X 620 -Y 10 -W 160 -Bold
     $pnlSearch.Controls.Add($lblCount)
 
@@ -518,11 +527,12 @@ function Show-MainForm {
     $lv.HeaderStyle = [System.Windows.Forms.ColumnHeaderStyle]::Nonclickable
     $lv.MultiSelect = $false
     $lv.HideSelection = $false
-    [void]$lv.Columns.Add("Name", 230)
-    [void]$lv.Columns.Add("Category", 120)
-    [void]$lv.Columns.Add("SubCategory", 120)
-    [void]$lv.Columns.Add("PS Ver", 95)
-    [void]$lv.Columns.Add("Description", 430)
+    [void]$lv.Columns.Add("Name", 205)
+    [void]$lv.Columns.Add("Team", 100)
+    [void]$lv.Columns.Add("Category", 115)
+    [void]$lv.Columns.Add("SubCategory", 115)
+    [void]$lv.Columns.Add("PS Ver", 80)
+    [void]$lv.Columns.Add("Description", 370)
     $split.Panel1.Controls.Add($lv)
 
     # --- CONTEXT MENU ---
@@ -610,11 +620,20 @@ function Show-MainForm {
         if ($idx -ge 0) { $cmbCat.SelectedIndex = $idx } else { $cmbCat.SelectedIndex = 0 }
     }
 
+    function Update-TeamFilter {
+        $sel = $cmbTeam.Text
+        $cmbTeam.Items.Clear()
+        foreach ($team in (Get-ScriptHubTeam)) { [void]$cmbTeam.Items.Add($team) }
+        $idx = $cmbTeam.Items.IndexOf($sel)
+        if ($idx -ge 0) { $cmbTeam.SelectedIndex = $idx } else { $cmbTeam.SelectedIndex = 0 }
+    }
+
     function Update-LV {
-        param([string]$S="",[string]$CF="All",[string]$PF="All")
+        param([string]$S="",[string]$CF="All",[string]$PF="All",[string]$TF="All")
         $lv.Items.Clear()
-        foreach ($cmd in (Select-ScriptHubCommand -SearchText $S -Category $CF -PSVersion $PF)) {
+        foreach ($cmd in (Select-ScriptHubCommand -SearchText $S -Category $CF -PSVersion $PF -Team $TF)) {
             $item = New-Object System.Windows.Forms.ListViewItem($cmd.Name)
+            [void]$item.SubItems.Add($cmd.Team)
             [void]$item.SubItems.Add($cmd.Category)
             [void]$item.SubItems.Add($cmd.SubCategory)
             [void]$item.SubItems.Add($cmd.PSVersion)
@@ -630,7 +649,7 @@ function Show-MainForm {
         param([string]$Id)
         $cmd = Get-ScriptHubCommandById -Id $Id
         if ($cmd) {
-            $lblDName.Text  = "$($cmd.Name)  [$($cmd.Category) > $($cmd.SubCategory)]  [PS $($cmd.PSVersion)]"
+            $lblDName.Text  = "$($cmd.Name)  [$($cmd.Team) > $($cmd.Category) > $($cmd.SubCategory)]  [PS $($cmd.PSVersion)]"
             $lblDTags.Text  = "Tags: $($cmd.Tags)"
             $lblDNotes.Text = "$($cmd.Notes)"
             $txtScript.Text = $cmd.Script
@@ -646,13 +665,13 @@ function Show-MainForm {
     }
 
     # === EVENT HANDLERS ===
-    $doSearch = { Update-LV -S $txtSearch.Text -CF $cmbCat.Text -PF $cmbPS.Text }
+    $doSearch = { Update-LV -S $txtSearch.Text -CF $cmbCat.Text -PF $cmbPS.Text -TF $cmbTeam.Text }
 
     $btnSearch.Add_Click($doSearch)
 
     $txtSearch.Add_KeyDown({
         if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Enter) {
-            Update-LV -S $txtSearch.Text -CF $cmbCat.Text -PF $cmbPS.Text
+            Update-LV -S $txtSearch.Text -CF $cmbCat.Text -PF $cmbPS.Text -TF $cmbTeam.Text
             $_.SuppressKeyPress = $true
         }
     })
@@ -661,7 +680,8 @@ function Show-MainForm {
         $txtSearch.Text = ""
         $cmbCat.SelectedIndex = 0
         $cmbPS.SelectedIndex = 0
-        Update-LV
+        $cmbTeam.SelectedIndex = 0
+        Update-LV -TF $cmbTeam.Text
         $lblDName.Text = "Select a script to view details"
         $lblDTags.Text = ""
         $lblDNotes.Text = ""
@@ -673,6 +693,7 @@ function Show-MainForm {
 
     $cmbCat.Add_SelectedIndexChanged($doSearch)
     $cmbPS.Add_SelectedIndexChanged($doSearch)
+    $cmbTeam.Add_SelectedIndexChanged($doSearch)
 
     $lv.Add_SelectedIndexChanged({
         $id = Get-SelectedId
@@ -743,7 +764,8 @@ function Show-MainForm {
             . (Join-Path $here 'ScriptHub.Catalog.ps1')
             [void](Initialize-ScriptHub)
             Update-CatFilter
-            Update-LV -S $txtSearch.Text -CF $cmbCat.Text -PF $cmbPS.Text
+            Update-TeamFilter
+            Update-LV -S $txtSearch.Text -CF $cmbCat.Text -PF $cmbPS.Text -TF $cmbTeam.Text
             $statusBar.Text = " Catalog reloaded | Scripts: $($global:Commands.Count)"
         } catch {
             [System.Windows.Forms.MessageBox]::Show("The catalog could not be reloaded:`n$($_.Exception.Message)", "Reload error", "OK", "Error")
@@ -764,7 +786,8 @@ function Show-MainForm {
 
     # === INITIALIZE ===
     Update-CatFilter
-    Update-LV
+    Update-TeamFilter
+    Update-LV -TF $cmbTeam.Text
 
     Set-RoundedCorners -Control $form -Radius 12
     $form.Add_Resize({ Set-RoundedCorners -Control $this -Radius 12 })
