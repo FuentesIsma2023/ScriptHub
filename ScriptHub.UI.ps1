@@ -24,7 +24,74 @@ public static class ScriptHubNative
     [DllImport("user32.dll")]
     public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 }
-'@
+
+public sealed class ScriptHubResizeWindow : System.Windows.Forms.NativeWindow, System.IDisposable
+{
+    private const int WM_NCHITTEST = 0x84;
+    private const int WM_GETMINMAXINFO = 0x24;
+    private const int HTCLIENT = 1;
+    private const int HTLEFT = 10;
+    private const int HTRIGHT = 11;
+    private const int HTTOP = 12;
+    private const int HTTOPLEFT = 13;
+    private const int HTTOPRIGHT = 14;
+    private const int HTBOTTOM = 15;
+    private const int HTBOTTOMLEFT = 16;
+    private const int HTBOTTOMRIGHT = 17;
+    private const int BORDER_SIZE = 8;
+
+    public ScriptHubResizeWindow(System.Windows.Forms.Form form)
+    {
+        AssignHandle(form.Handle);
+    }
+
+    protected override void WndProc(ref System.Windows.Forms.Message message)
+    {
+        if (message.Msg == WM_NCHITTEST && !IsMaximized())
+        {
+            int x = (short)((long)message.LParam & 0xFFFF);
+            int y = (short)(((long)message.LParam >> 16) & 0xFFFF);
+            System.Drawing.Point point = TargetForm.PointToClient(new System.Drawing.Point(x, y));
+            int width = TargetForm.ClientSize.Width;
+            int height = TargetForm.ClientSize.Height;
+            bool left = point.X <= BORDER_SIZE;
+            bool right = point.X >= width - BORDER_SIZE;
+            bool top = point.Y <= BORDER_SIZE;
+            bool bottom = point.Y >= height - BORDER_SIZE;
+
+            if (left && top) message.Result = (IntPtr)HTTOPLEFT;
+            else if (right && top) message.Result = (IntPtr)HTTOPRIGHT;
+            else if (left && bottom) message.Result = (IntPtr)HTBOTTOMLEFT;
+            else if (right && bottom) message.Result = (IntPtr)HTBOTTOMRIGHT;
+            else if (left) message.Result = (IntPtr)HTLEFT;
+            else if (right) message.Result = (IntPtr)HTRIGHT;
+            else if (top) message.Result = (IntPtr)HTTOP;
+            else if (bottom) message.Result = (IntPtr)HTBOTTOM;
+            else message.Result = (IntPtr)HTCLIENT;
+
+            if ((int)message.Result != HTCLIENT) return;
+        }
+
+        base.WndProc(ref message);
+    }
+
+    private System.Windows.Forms.Form TargetForm
+    {
+        get { return System.Windows.Forms.Control.FromHandle(Handle) as System.Windows.Forms.Form; }
+    }
+
+    private bool IsMaximized()
+    {
+        System.Windows.Forms.Form form = TargetForm;
+        return form != null && form.WindowState == System.Windows.Forms.FormWindowState.Maximized;
+    }
+
+    public void Dispose()
+    {
+        ReleaseHandle();
+    }
+}
+'@ -ReferencedAssemblies 'System.Windows.Forms.dll', 'System.Drawing.dll'
 
 # === LOAD DEPENDENCIES ===
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -473,6 +540,9 @@ function Show-MainForm {
     $form.Padding = New-Object System.Windows.Forms.Padding(0)
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
     try { $form.DoubleBuffered = $true } catch { }
+
+    # Restore native edge and corner resizing for the borderless custom chrome.
+    $resizeWindow = New-Object -TypeName ScriptHubResizeWindow -ArgumentList $form
 
     # --- TITLE BAR ---
     $pnlTitle = New-Object System.Windows.Forms.Panel
@@ -1002,6 +1072,7 @@ function Show-MainForm {
     Set-RoundedCorners -Control $form -Radius 12
     $form.Add_Resize({ Set-RoundedCorners -Control $this -Radius 12 })
     [void]$form.ShowDialog()
+    $resizeWindow.Dispose()
     $form.Dispose()
 }
 
