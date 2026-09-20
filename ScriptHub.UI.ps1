@@ -13,6 +13,13 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+$scriptHubCSharpReferences = @(
+    [System.Windows.Forms.Form].Assembly.Location
+    [System.Windows.Forms.Message].Assembly.Location
+    [System.Drawing.Point].Assembly.Location
+    [System.ComponentModel.Component].Assembly.Location
+) | Select-Object -Unique
+
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -92,11 +99,11 @@ public sealed class ScriptHubResizeWindow : System.Windows.Forms.NativeWindow, S
         ReleaseHandle();
     }
 }
-'@ -ReferencedAssemblies 'System.Windows.Forms.dll', 'System.Drawing.dll'
+'@ -ReferencedAssemblies $scriptHubCSharpReferences -ErrorAction Stop
 
 # === LOAD DEPENDENCIES ===
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
-foreach ($dep in @('ScriptHub.Core.ps1', 'ScriptHub.Catalog.ps1')) {
+foreach ($dep in @('ScriptHub.Core.ps1', 'ScriptHub.Catalog.ps1', 'ScriptHub.Splash.ps1')) {
     $depPath = Join-Path $here $dep
     if (-not (Test-Path $depPath)) {
         [System.Windows.Forms.MessageBox]::Show("Missing file: $dep`nIt must be in the same folder as ScriptHub.UI.ps1.", "ScriptHub", "OK", "Error")
@@ -1078,4 +1085,6 @@ function Show-MainForm {
 }
 
 # === LAUNCH ===
-Show-MainForm
+if (Show-ScriptHubSplash) {
+    Show-MainForm
+}

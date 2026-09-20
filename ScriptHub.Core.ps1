@@ -2,7 +2,7 @@
 # ScriptHub.Core.ps1 - Logic layer (no UI, no CSV persistence)
 # Part of ScriptHub. Loaded by ScriptHub.UI.ps1 - do not run this file alone.
 # Author: Ismael Najera
-#
+# Collaborator: Diego Saldivar
 # The catalog is code-based: scripts live in ScriptHub.Catalog.ps1.
 # The tool keeps its catalog in memory and writes only temporary run/install files.
 # ============================================================================

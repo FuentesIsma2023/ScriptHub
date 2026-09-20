@@ -2,7 +2,7 @@
 # ScriptHub.Catalog.ps1 - Script listing / catalog only
 # Part of ScriptHub. Loaded by ScriptHub.UI.ps1 - do not run this file alone.
 # Author: Ismael Najera
-#
+# Collaborator: Diego Saldivar
 # HOW TO ADD A NEW SCRIPT:
 #   1. A colleague submits the request form published on the ScriptHub site.
 #   2. The request is reviewed, validated and approved.
