@@ -7,6 +7,7 @@
 #   ScriptHub.Catalog.ps1  -> script listing
 #
 # Author: Ismael Najera
+# Collaborator: Diego Saldivar
 # ============================================================================
 
 Add-Type -AssemblyName System.Windows.Forms
