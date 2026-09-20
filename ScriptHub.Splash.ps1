@@ -43,7 +43,7 @@ function Show-ScriptHubSplash {
     $splash.Controls.Add($titleBar)
 
     $titleText = New-Object System.Windows.Forms.Label
-    $titleText.Text = "ScriptHub - Microsoft Windows"
+    $titleText.Text = "ScriptHub"
     $titleText.Dock = [System.Windows.Forms.DockStyle]::Fill
     $titleText.ForeColor = [System.Drawing.Color]::White
     $titleText.Font = New-Object System.Drawing.Font("Microsoft Sans Serif",9,[System.Drawing.FontStyle]::Bold)
@@ -90,7 +90,7 @@ function Show-ScriptHubSplash {
 
     $version = New-Object System.Windows.Forms.Label
     $version.Text = "INTERNAL SCRIPT CATALOG  |  VERSION 4.0"
-    $version.Location = New-Object System.Drawing.Point(31,64)
+    $version.Location = New-Object System.Drawing.Point(51,64)
     $version.Size = New-Object System.Drawing.Size(620,18)
     $version.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
     $version.Font = New-Object System.Drawing.Font("Microsoft Sans Serif",8,[System.Drawing.FontStyle]::Bold)
