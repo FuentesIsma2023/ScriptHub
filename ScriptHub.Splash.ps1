@@ -74,10 +74,20 @@ function Show-ScriptHubSplash {
     $window.Location = New-Object System.Drawing.Point(32,28)
     $window.Size = New-Object System.Drawing.Size(716,420)
     $window.MinimumSize = New-Object System.Drawing.Size(576,340)
-    $window.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+    $window.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
     $window.BackColor = $windowGray
     $window.BorderStyle = [System.Windows.Forms.BorderStyle]::Fixed3D
     $workspace.Controls.Add($window)
+
+    $centerWindow = {
+        $availableWidth = $workspace.ClientSize.Width
+        $availableHeight = $workspace.ClientSize.Height
+        $window.Location = New-Object System.Drawing.Point(
+            [Math]::Max(0,[int](($availableWidth - $window.Width) / 2)),
+            [Math]::Max(0,[int](($availableHeight - $window.Height) / 2)))
+    }.GetNewClosure()
+    $workspace.Add_Resize($centerWindow)
+    & $centerWindow
 
     $brand = New-Object System.Windows.Forms.Label
     $brand.Text = "ScriptHub"
